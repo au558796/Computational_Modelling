@@ -1,0 +1,125 @@
+---
+title: "Computational Modeling - Week 5 - Assignment 2 - Part 2"
+author: "Riccardo Fusaroli"
+date: "2/19/2017"
+output: html_document
+---
+
+```{r}
+# prelude
+setwd("C:/Users/danaj/OneDrive/Desktop/COMPUTATIONAL MODELLING/ComputationalModelling")
+library(pacman)
+p_load(rethinking,gridGraphics)
+```
+
+## In this assignment we learn how to assess rates from a binomial distribution, using the case of assessing your teachers' knowledge of CogSci.
+
+### Second part: Focusing on predictions
+
+Last year you assessed the teachers (darned time runs quick!). Now you want to re-test them and assess whether your models are producing reliable predictions. In Methods 3 we learned how to do machine-learning style assessment of predictions (e.g. rmse on testing datasets). Bayesian stats makes things a bit more complicated. So we'll try out how that works. N.B. You can choose which prior to use for the analysis of last year's data.
+
+Questions to be answered (but see guidance below):
+1- Write a paragraph discussing how assessment of prediction performance is different in Bayesian vs. frequentist models
+2- Provide at least one plot and one written line discussing prediction errors for each of the teachers.
+
+This is the old data:
+- Riccardo: 3 correct answers out of 6 questions
+- Kristian: 2 correct answers out of 2 questions (then he gets bored)
+- Josh: 160 correct answers out of 198 questions (Josh never gets bored)
+- Mikkel: 66 correct answers out of 132 questions
+
+This is the new data:
+- Riccardo: 9 correct answers out of 10 questions (then he freaks out about teaching preparation and leaves)
+- Kristian: 8 correct answers out of 12 questions
+- Josh: 148 correct answers out of 172 questions (again, Josh never gets bored)
+- Mikkel: 34 correct answers out of 65 questions
+
+Guidance Tips
+
+1. There are at least two ways of assessing predictions.
+2. Last year's results are this year's expectations.
+3. Are the parameter estimates changing? (way 1)
+4. How does the new data look in last year's predictive posterior? (way 2)
+```{r}
+
+# old data frame
+data1<- data.frame(Teacher = c("RF","KT", "JS", "MW"), Correct = c(3,2,160,66), Questions = c(6,2,198,132))
+
+# new data frame
+data2<- data.frame(Teacher = c("RF","KT", "JS", "MW"), Correct = c(9,8,148,34), Questions = c(10,12,172,65))
+
+# function to grab plots
+grab_grob = function(){
+  grid.echo()
+  grid.grab()
+}
+
+# list of teachers for loop
+teachers = c("RF","KT", "JS", "MW")
+
+# making plots
+for (teacher in teachers){
+ 
+  # old data
+  loop_data = subset(data1 , Teacher == teacher)
+  g_rid = seq(from = 0, to = 1, length.out = 100)
+  pri = dnorm(g_rid, 0.8, 0.2)
+  lhood = dbinom(loop_data$Correct, size = loop_data$Questions, g_rid)
+  upos = lhood * pri
+  pos1 = upos / sum(upos)
+  samplot = sample(g_rid, prob=pos1, size = 1e4, replace = T)
+  
+  # new data
+  loop_data2 = subset(data2 , Teacher == teacher)
+  pri2= pos1 # use old posterior as new prior
+  lhood2 = dbinom(loop_data2$Correct, size = loop_data2$Questions, g_rid)
+  upos2 = lhood2 * pri2
+  pos2 = upos2 / sum(upos2)
+  samplot2 = sample(g_rid, prob=pos2, size = 1e4, replace = T)
+  
+  # all posteriors
+  temp = data.frame(g_rid = g_rid, pos1 = pos1, pos2 = pos2)
+  temp1 = ggplot(temp, aes(g_rid))+
+    geom_line(y = pos1, color = "red")+ # old posterior
+    geom_line(y = pos2, colour = "blue")+ # new posterior
+    ylim(0,0.2) + # making y axis more visually pleasing
+    labs(x = "score", y = "probability")
+  assign(paste(teacher, "Posteriors", sep = "_"), temp1)
+
+  # old predictive posteriors
+  temp2 = rbinom( 1e4 , size= loop_data$Questions , prob=samplot)
+  samphist = simplehist(temp2, main = paste(teacher))
+  samphist <- grab_grob()
+  assign(paste(teacher, "Old_Predictive_Posteriors", sep = "_"), samphist)
+  
+  # new predictive posteriors
+  temp3 = rbinom( 1e4 , size = loop_data2$Questions , prob = samplot2)
+  samphist2 = simplehist(temp3)
+  samphist2 <- grab_grob()
+  assign(paste(teacher, "New_Predictive_Posteriors", sep = "_"), samphist2)
+   
+}
+
+# all posteriors
+gridExtra::grid.arrange(RF_Posteriors,KT_Posteriors,JS_Posteriors, MW_Posteriors)
+
+# old & new predictive posteriors
+gridExtra::grid.arrange(RF_Old_Predictive_Posteriors, RF_New_Predictive_Posteriors)
+gridExtra::grid.arrange(KT_Old_Predictive_Posteriors, KT_New_Predictive_Posteriors)
+gridExtra::grid.arrange(JS_Old_Predictive_Posteriors, JS_New_Predictive_Posteriors)
+gridExtra::grid.arrange(MW_Old_Predictive_Posteriors, MW_New_Predictive_Posteriors)
+
+```
+
+### Depending on time: Questions from the handbook
+2H1. Suppose there are two species of panda bear. Both are equally common in the wild and live in the same places. They look exactly alike and eat the same food, and there is yet no genetic assay capable of telling them apart. They differ however in their family sizes. Species A gives birth to twins 10% of the time, otherwise birthing a single infant. Species B births twins 20% of the time, otherwise birthing singleton infants. Assume these numbers are known with certainty, from many years of field research.
+Now suppose you are managing a captive panda breeding program. You have a new female panda of unknown species, and she has just given birth to twins. What is the probability that her next birth will also be twins?
+
+2H2. Recall all the facts from the problem above. Now compute the probability that the panda we have is from species A, assuming we have observed only the first birth and that it was twins.
+
+2H3. Continuing on from the previous problem, suppose the same panda mother has a second birth and that it is not twins, but a singleton infant. Compute the posterior probability that this panda is species A.
+
+2H4. A common boast of Bayesian statisticians is that Bayesian inference makes it easy to use all of the data, even if the data are of different types. So suppose now that a veterinarian comes along who has a new genetic test that she claims can identify the species of our mother panda. But the test, like all tests, is imperfect. This is the information you have about the test:
+- The probability it correctly identifies a species A panda is 0.8.
+- The probability it correctly identifies a species B panda is 0.65.
+The vet administers the test to your panda and tells you that the test is positive for species A. First ignore your previous information from the births and compute the posterior probability that your panda is species A. Then redo your calculation, now using the birth data as well.
