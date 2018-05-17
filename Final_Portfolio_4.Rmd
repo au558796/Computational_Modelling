@@ -1,0 +1,173 @@
+---
+title: "Computational Modelling - Assignment 4"
+author: "Dana Jensen"
+date: "3/16/2018"
+output: html_document
+---
+
+PRELUDE
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+setwd("C:/Users/danaj/OneDrive/Desktop/COMPUTATIONAL MODELLING/ComputationalModelling")
+library(pacman)
+p_load(metafor,lme4,brms, tidyverse, readxl, rethinking, data.table)
+
+## only need data1 for first question
+data1 <- read_excel("Assignment4MetaData.xlsx")
+## data2 <- read_excel("Assignment4PitchDatav2.xlsx")
+
+## these are the already cleaned, scaled, and centered data, use these for the rest
+SchizData <- read.csv("SchizData.csv")
+MetaAnalysis <- read.csv("MetaAnalysis.csv")
+
+```
+
+Step 1: Reproduce the meta-analysis of pitch sd from previous studies of voice in schizophrenia
+# - the data is available as Assignment4MetaData.xlsx
+# - Effect size (cohen's d), sd and variance are already calculated (you're welcome!)
+# - Since we're only interested in getting a meta-analytic effect size, let's take a shortcut and use bromance magic (brms): https://mvuorre.github.io/post/2016/2016-09-29-bayesian-meta-analysis/
+
+```{r}
+
+## NOTE: "mean standard deviation between sz and hc is X"
+
+M <- brm(MeanES | se(SdES) ~ 1 + (1|StudyRef), data = data1 , iter = 2000, cores = 2, chain = 2)
+
+summary(M)
+plot(M)
+
+```
+
+Step 2: Prepare the pitch SD data from last year
+# - the data is available as Assignment4PitchData.csv (thanks Celine)
+# - We do not know how to build random effects, yet. So we need to simplify the dataset to avoid interdependence between datapoints: How? 
+##  NOTE: take mean for every participant so there is one datapoint
+# - Also, let's standardize the data, so that they are compatible with our meta-analytic prior (Cohen's d (effect size) is measured in SDs).
+##  NOTE: centre and scale
+
+```{r}
+
+## take mean for each participant
+## diagnosis seems to change for some participants?
+diagnosis = aggregate(data2[,2], by = list(data2$ID), FUN = median)
+StudyID = aggregate(data2[,3], by = list(data2$ID), FUN = median)
+PitchMean = aggregate(data2[,6], by = list(data2$ID), FUN = mean)
+PitchSD = aggregate(data2[,7], by = list(data2$ID), FUN = mean)
+ID = unique(data2$ID)
+temp1 <- data.frame(ID = ID, PitchMean = PitchMean$PitchMean, PitchSD = PitchSD$PitchSD, ID = PitchMean$Group.1, diagnosis = diagnosis, StudyID = StudyID)
+
+## making df of participants with one datapoint each
+temp1 <- select(temp1, ID, PitchMean, PitchSD, diagnosis.diagnosis, StudyID.studynr)
+setnames(temp1, "diagnosis.diagnosis", "diagnosis")
+setnames(temp1, "StudyID.studynr", "StudyID")
+
+## making df of meta analysis with only relevant columns
+temp2 <- select(data1, "StudyID", "PITCH_F0_HC_M",
+"PITCH_F0_HC_SD","PITCH_F0_SZ_M","PITCH_F0_SZ_SD","PITCH_F0SD_HC_M","PITCH_F0SD_HC_SD","PITCH_F0SD_SZ_M","PITCH_F0SD_SZ_SD","SdES", "MeanES")
+
+## scale and centre
+## final, clean dataset
+temp1$PitchMean <- scale(temp1$PitchMean)
+temp1$PitchSD <- scale(temp1$PitchSD)
+SchizData <- temp1
+write.csv(SchizData, file = "SchizData.csv", row.names = FALSE)
+
+## final, clean dataset
+temp3 <- select(temp2,"PITCH_F0_HC_M","PITCH_F0_HC_SD","PITCH_F0_SZ_M","PITCH_F0_SZ_SD","PITCH_F0SD_HC_M","PITCH_F0SD_HC_SD","PITCH_F0SD_SZ_M","PITCH_F0SD_SZ_SD","SdES", "MeanES")
+temp3 <- scale(temp3)
+temp4 <- select(temp2, StudyID)
+MetaAnalysis <- cbind(temp4, temp3)
+write.csv(MetaAnalysis, file = "MetaAnalysis.csv", row.names = FALSE)
+
+```
+
+Step 3: Build a regression model predicting Pitch SD from Diagnosis.
+# - how is the outcome distributed? (likelihood function)
+# - how are the parameters of the likelihood distribution distributed? Which predictors should they be conditioned on?
+# - use a skeptical/conservative prior for the effects of diagnosis. Remember you'll need to motivate it.
+# - Describe and plot the estimates. Evaluate model quality
+
+```{r}
+
+## do we use brm or rethinking?
+m1 <- brm(PitchSD ~ 1 + diagnosis + (1|StudyID), data = SchizData, warmup = 2000, iter = 5000, cores = 2, chain = 2)
+
+SchizData$diagnosis <- as.numeric(SchizData$diagnosis)
+
+## but then how to do random effects?
+m1 = map(
+  alist(
+    PitchSD ~ dnorm(m ,s),
+    m <- a + b*diagnosis,
+    a ~ dnorm(0,1), 
+    b ~ dnorm(0,0.2),
+    s ~ dcauchy(0,2)
+    ) ,
+  data= SchizData)
+
+model1=precis(m1, corr = T)
+model1
+plotm1<-plot(model1)
+
+```
+
+Step 4: Now re-run the model with the meta-analytic prior
+# - Describe and plot the estimates. Evaluate model quality
+
+```{r}
+
+## now we have to use the numbers from the 1st model
+### intercept: -0.6
+### SE(INT): 0.27
+### SD(INT): 0.76
+### SE(SD(INT)): 0.28
+
+SchizData$diagnosis=as.numeric(SchizData$diagnosis)
+m2 = map(
+  alist(
+    PitchSD ~ dnorm(m ,s),
+    m <- a + b*diagnosis,
+    a ~ dnorm(0,1), 
+    b ~ dnorm(0.76,0.27),
+    s ~ dcauchy(0,2)
+    ) ,
+  data= SchizData)
+
+model2 = precis(m2, corr = T)
+model2
+plotm2 <- plot(model2)
+
+```
+
+Step 5: Compare the models
+# - Plot priors and posteriors of the diagnosis effect in both models
+# - Compare posteriors between the two models
+# - Compare their relative distance from truth (WAIC)
+# - Discuss how they compare and whether any of them is best.
+
+```{r}
+## run comparison (WAIC)
+models = compare(m1, m2)
+plot(models)
+
+## plot priors and posteriors
+## prior
+plot(dnorm(0,1))
+## posterior
+post1 = extract.samples(m1)
+dens(post1$b)
+
+## prior
+plot(dnorm(0,0.27))
+## posterior
+post2 = extract.samples(m2)
+dens(post2$b)
+
+```
+
+END

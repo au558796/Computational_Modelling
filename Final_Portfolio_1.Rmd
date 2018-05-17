@@ -1,0 +1,155 @@
+---
+title: "Untitled"
+author: "Riley Anthony"
+date: "February 14, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd("C:/Users/danaj/OneDrive/Desktop/COMPUTATIONAL MODELLING/ComputationalModelling")
+pacman::p_load(readr,groupdata2,ggplot2,tidyverse,data.table,lmerTest, jpeg, grid, Metrics)
+```
+
+
+```{r}
+FixV1=read.csv("FixationsV1.csv")
+SacV1=read.csv("SaccadesV1.csv")
+SampV1=read.csv("SamplesV1.csv")
+
+l1=read.csv("logfile_1_2_f.csv")
+l2=read.csv("logfile_2_1_f.csv")
+l3=read.csv("logfile_3_2_f.csv")
+l4=read.csv("logfile_4_1_F.csv")
+l5=read.csv("logfile_5_2_m.csv")
+l6=read.csv("logfile_6_1_m.csv")
+logs=rbind(l1,l2,l3,l4,l5,l6)
+
+setnames(logs,"X", "Trial")
+setnames(logs,"subject", "ParticipantID")
+logs$Trial=logs$Trial+1
+
+FixV2=merge(logs, FixV1, all=T)
+SacV2=merge(logs, SacV1, all=T)
+SampV2=merge(logs, SampV1, all=T)
+
+FixV2$SearchType[FixV2$SearchOrder == "1" & FixV2$Trial < "6"]="Star"
+FixV2$SearchType[FixV2$SearchOrder == "1" & FixV2$Trial > "5"]="Count"
+FixV2$SearchType[FixV2$SearchOrder == "2" & FixV2$Trial < "6"]="Count"
+FixV2$SearchType[FixV2$SearchOrder == "2" & FixV2$Trial > "5"]="Star"
+FixV2$SearchType[FixV2$SearchOrder == "1" & FixV2$Trial == "10"]="Count"
+FixV2$SearchType[FixV2$SearchOrder == "2" & FixV2$Trial == "10"]="Star"
+
+SacV2$SearchType[SacV2$SearchOrder == "1" & SacV2$Trial < "6"]="Star"
+SacV2$SearchType[SacV2$SearchOrder == "1" & SacV2$Trial > "5"]="Count"
+SacV2$SearchType[SacV2$SearchOrder == "2" & SacV2$Trial < "6"]="Count"
+SacV2$SearchType[SacV2$SearchOrder == "2" & SacV2$Trial > "5"]="Star"
+SacV2$SearchType[SacV2$SearchOrder == "1" & SacV2$Trial == "10"]="Count"
+SacV2$SearchType[SacV2$SearchOrder == "2" & SacV2$Trial == "10"]="Star"
+
+SampV2$SearchType[SampV2$SearchOrder == "1" & SampV2$Trial < "6"]="Star"
+SampV2$SearchType[SampV2$SearchOrder == "1" & SampV2$Trial > "5"]="Count"
+SampV2$SearchType[SampV2$SearchOrder == "2" & SampV2$Trial < "6"]="Count"
+SampV2$SearchType[SampV2$SearchOrder == "2" & SampV2$Trial > "5"]="Star"
+SampV2$SearchType[SampV2$SearchOrder == "1" & SampV2$Trial == "10"]="Count"
+SampV2$SearchType[SampV2$SearchOrder == "2" & SampV2$Trial == "10"]="Star"
+```
+
+
+```{r}
+FixV2=read.csv("FixationsV2.csv")
+SacV2=read.csv("SaccadesV2.csv")
+SampV2=read.csv("SamplesV2.csv")
+
+mod1=glmer(Duration~SearchType*Trial+(1+SearchType|ParticipantID),
+           data=FixV2,family=gaussian(link=log))
+summary(mod1)
+
+mod2=glmer(Duration~SearchType+Trial+(1+SearchType|ParticipantID),
+           data=FixV2,family=gaussian(link=log))
+summary(mod2)
+
+mod3=glmer(Duration~SearchType+(1+SearchType|ParticipantID),
+           data=FixV2,family=gaussian(link=log))
+summary(mod3)
+
+#subset first
+
+search = subset(FixV2,Task == "VisualSearch")
+search$ParticipantID = as.numeric(as.factor(as.character(search$ParticipantID)))
+
+folds=4
+
+#add column called "folds"
+foldyFixV2=fold(search, folds, id_col = "ParticipantID")
+
+
+gmod="glmer(Duration~SearchType + Trial + (1+SearchType |ParticipantID),family = gaussian (link = log), search)"
+mod1="glmer(Duration~SearchType * Trial + (1+SearchType |ParticipantID),family = gaussian (link = log), search)"
+mod2="glmer(Duration~SearchType + (1+SearchType |ParticipantID),family = gaussian (link = log), search)"
+
+
+models=c(gmod,mod1,mod2) 
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+cross_v=function(numfolds, data, tempmod_string){
+  foldyFixV2=fold(search, folds, id_col = "ParticipantID")
+  perf_test_list=c() #Create variables
+  perf_train_list=c()
+  #r2m=c()
+  #r2c=c()
+  
+  for(i in seq(numfolds)){
+    temp_train = subset(foldyFixV2, .folds != i) #
+    temp_test = subset(foldyFixV2, .folds == i) #
+    
+    temp_model = glmer(Duration~SearchType + Trial + (1+SearchType |ParticipantID),family = gaussian (link = log), search)
+    
+    pred_test=predict(temp_model, temp_test, allow.new.levels=T) #
+    perf_test=Metrics::rmse(temp_test$Duration, pred_test) #
+    perf_test_list=c(perf_test_list, perf_test) #
+    pred_train=predict(temp_model, temp_train, allow.new.levels=T) #
+    perf_train=Metrics::rmse(temp_train$Duration, pred_train) #
+    perf_train_list=c(perf_train_list, perf_train) #
+    
+    #r2_df = as.data.frame(r.squaredGLMM(temp_model)) 
+    #r2m = c(r2m,r2_df[1,1])
+    #r2c = c(r2c,r2_df[2,1])
+  }
+  
+  perf_df= data.frame(perf_test_list, perf_train_list, temp_model=tempmod_string)
+  
+}
+
+for(temp_model in models) {
+  if (temp_model == models[1]){
+    results_df=cross_v(4, foldyFixV2, temp_model)
+  }else{
+    results_df = rbind(results_df, cross_v(4, foldyFixV2, temp_model))
+  }}
+
+```
+
+
+```{r}
+HotColours=colorRampPalette(c("#00007F", "blue", "#007FFF", "cyan", "#7FFF7F", "yellow", "#FF7F00", "red", "#7F0000"))
+
+img6 = readJPEG("C:/Users/tamec/Desktop/Programming/Git/Semester 4/Eye Tracking/eyetrackingscripts/foraging/ng021ws.jpg")
+g6 = rasterGrob(img,interpolate=TRUE)
+
+ggplot(subset(FixV2, Task=='VisualSearch' & ParticipantID=='1_1_f1' & Trial==1), aes(x = PositionX, y = 1081-PositionY)) +
+xlim(0,1920) +
+ylim(0, 1080) +
+annotation_custom(g6, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) + #xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=Inf) +
+stat_density2d(geom="raster", aes(fill=..density.., alpha=sqrt(sqrt(..density..))), contour=FALSE, n=1000) + 
+scale_alpha(range = c(0.1, 0.6)) + scale_fill_gradientn(colours = HotColours(10), trans="sqrt")
+#SCANPATHS
+x = 
+ggplot(subset(FixV2, Task == 'VisualSearch' & ParticipantID=='1_1_f1' & Trial==1), aes(x=PositionX, y= 1081-PositionY, label=Fixation))  +
+annotation_custom(g6, xmin=-Inf, xmax=Inf, ymin=-0, ymax=1080) + 
+geom_point(size = 5, alpha = 0.5, color = "white") +
+geom_path(size = 1, alpha = 0.3) +
+geom_text(aes(label = Fixation, size = 5)) 
+
+x
+```
